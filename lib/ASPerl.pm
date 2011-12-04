@@ -1,0 +1,652 @@
+package ASPerl;
+
+use 5.010001;
+use strict;
+use warnings;
+
+require Exporter;
+
+our @ISA = qw(Exporter);
+
+# Items to export into callers namespace by default. Note: do not export
+# names by default without a very good reason. Use EXPORT_OK instead.
+# Do not simply export all your public functions/methods/constants.
+
+# This allows declaration	use ASPerl ':all';
+# If you do not need this, moving things directly into @EXPORT or @EXPORT_OK
+# will save memory.
+our %EXPORT_TAGS = ( 'all' => [ qw(
+	
+) ] );
+
+our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
+
+our @EXPORT = qw(
+	
+);
+
+our $VERSION = '0.01';
+
+# Preloaded methods go here.
+
+use IO::Handle;
+#use IO::Capture::Stdout;
+#require "AnswerSet.pl";
+#require "Predicate.pl";
+#require "Value.pl";
+
+
+sub executeFromFileAndSave {		#Executes DLV with a file as input and saves the input and the output in another file
+
+	open DLVW, ">>", "$_[1]";
+	print DLVW $_[2];
+	close DLVW;
+
+	open(SAVESTDOUT, ">&STDOUT") or die "Can't save STDOUT: $!\n";
+	open(STDOUT, ">$_[0]") or die "Can't open STDOUT to $_[0]", "$!\n";
+
+
+	my @args = ("./dlv", "$_[1]");
+	system(@args) == 0
+		or die "system @args failed: $?";
+
+	open(STDOUT,">&SAVESTDOUT"); #close file and restore STDOUT
+	#close(STDOUT);
+	close OUTPUT;
+
+}
+
+sub executeAndSave {	#Executes DLV and saves the output of the program written by the user in a file
+
+	open(SAVESTDOUT, ">&STDOUT") or die "Can't save STDOUT: $!\n";
+	open(STDOUT, ">$_[0]") or die "Can't open STDOUT to $_[0]", "$!\n";
+
+	my @args = ("./dlv --");
+	system(@args) == 0 or die "system @args failed: $?";
+
+	open(STDOUT,">&SAVESTDOUT"); #close file and restore STDOUT
+	close OUTPUT;
+
+
+}
+
+#sub execute {	#Executes DLV and saves the output in an array. If the input is missing it opens the DLV terminal
+#
+#	my $last = $_[$#_];
+#
+#	if($last eq "iterative") {
+#		pop;
+#		my @input = @_;
+#		return iterativeExec(@input);
+#
+#	}
+#
+#	else {
+#
+#		my @input = @_;
+#
+#		return singleExec(@input);
+#		
+#	}
+#}
+
+sub iterativeExec {	# Executes an input program with several instances and stores them in a bidimensional array
+
+	my @input = @_;
+
+	my @returned_value;
+
+	if(@input) {
+		
+		my $option = $input[$#input];
+
+		if($option =~ /^-/) {
+			pop(@input);
+		}
+		else {
+			$option = "";
+		}
+
+		my $dir = pop(@input);
+		#opendir(DIR, $dir) || die("Cannot open directory");
+		#my @files = readdir(DIR);
+		#print "@files\n";
+		#closedir(DIR);
+		my @files = qx(ls $dir);
+			
+		my $size = @files;
+
+		for(my $i = 0; $i < $size; $i++) {
+
+			my $elem = $files[$i];
+			chomp $elem;
+			my @args = ("./dlv", "@input", "$dir$elem", "$option");
+			my (@out) = `@args`;
+			push @{$returned_value[$i]}, @out;
+		}
+		
+	}
+
+	else {
+		#my $command = "./dlv --";
+		#(@returned_value) = `$command`;		#backtick = `
+		print "INPUT ERROR\n";
+	}
+
+	return @returned_value;
+
+}
+
+sub singleExec {	 # Executes a single input program or opens the DLV terminal and stores it in an array
+
+	my @input = @_;
+	my @returned_value;
+
+	if(@input) {
+
+
+		my @args = ("./dlv", "@input");
+		(@returned_value) = `@args`;
+		
+	}
+
+	else {
+		my $command = "./dlv --";
+		(@returned_value) = `$command`;		#backtick = `
+	}
+
+	return @returned_value;
+}
+
+sub selectOutput {	# Select one of the outputs returned by the iterative execution of more input programs 
+
+	my @stdoutput = @{$_[0]};
+	my $n = $_[1];
+
+	return @{$stdoutput[$n]};
+	
+}
+
+sub getFacts {	# Return the facts of the input program   ###pay attention to the splitting function
+
+	my $input = shift;
+
+	my @isAFile = stat($input);
+
+	my @facts;
+
+	if(@isAFile) {
+
+		open INPUT, "<", "$input";
+		my @rows = <INPUT>;
+		foreach my $row (@rows) {
+			if($row =~ /^(\w+)(\(((\w|\d|\.)+,?)*\))?\./) {
+				push @facts, $row;
+			}
+		}
+		close INPUT;
+
+	}
+	else {
+		my @str = split /\. /,$input;  #better doing something without space : split /\./
+		foreach my $elem (@str) {
+
+			if($elem =~ /^(\w+)(\(((\w|\d|\.)+,?)*\))?\.?$/) {
+				push @facts, $elem;
+			}
+		}
+	}
+	return @facts;
+	
+}
+
+sub addCode {	#Adds code to input
+
+	my $program = $_[0];
+	my $code = $_[1];
+	my @isAFile = stat($program);
+
+	if(@isAFile) {
+		open PROGRAM, ">>", $program;
+		print PROGRAM "$code\n";
+		close PROGRAM;
+	}
+
+	else {
+		$program = \($_[0]);
+		$$program = "$$program $code";
+	}
+		
+}
+
+sub getASFromFile {	#Gets the Answer Set from the file where the output was saved
+
+	open RESULT, "<", "$_[0]" or die $!;
+	my @result = <RESULT>;
+	my @arr;
+	foreach my $line (@result) {
+
+		if($line =~ /\{\w*/) {
+			$line =~ s/(\{|\})//g;
+			#$line =~ s/\n//g;  # delete \n from $line
+		        my @tmp = split(', ', $line);
+			push @arr, @tmp;
+		}
+
+	}
+
+	close RESULT;
+	return @arr;
+}
+
+sub getAS { #Returns the Answer Sets from the array where the output was saved
+
+	my @result = @_;
+	my @arr;
+
+	foreach my $line (@result) {
+
+		#my $ref = ref($line);
+		#if($ref eq "ARRAY") {
+			#print "@{$line}\n";
+		#}
+
+		if($line =~ /\{\w*/) {
+			$line =~ s/(\{|\})//g;
+			$line =~ s/(Best model:)//g;
+			#$line =~ s/\n//g;  # delete \n from $line
+		        my @tmp = split(', ', $line);
+			push @arr, @tmp;
+		}
+
+	}
+
+	return @arr;
+}
+
+sub statistics {	# Return an array of hashes in which the statistics of every predicate of every answerSets are stored
+			# If a condition of comparison is specified(number of predicates) it returns the answer sets that satisfy
+			# that condition 
+
+	my @as = @{$_[0]};
+	my @pred = @{$_[1]};
+	my @num = @{$_[2]};
+	my @operators = @{$_[3]};
+
+	my @sets;
+	my @ans;
+	
+	my $countAS = 0;
+	my @stat;
+
+	my $countPred;
+
+	foreach my $elem (@as) {
+
+		if($elem =~ /(\w+).*\n/) {
+			push @{$sets[$countAS]}, $elem;
+			if(_existsPred($1,\@pred)) {
+				$stat[$countAS]{$1} += 1;
+				$countAS += 1;
+			}
+		}
+
+		elsif($elem =~ /(\w+).*/) {
+			push @{$sets[$countAS]}, $elem;
+			if(_existsPred($1,\@pred)) {
+				$stat[$countAS]{$1} += 1;
+			}
+		}
+	}
+
+	my $comparison = 0;
+	if(@num and @operators) {
+		$comparison = 1;
+	}
+	elsif(@num and !@operators) {
+		print "Error: comparison element missing";
+		return @ans;
+	}
+	
+	
+
+	if($comparison) {
+		my $size = @pred;
+		my $statSize = @stat;
+
+		for(my $j = 0; $j < $statSize; $j++) {
+			for(my $i = 0; $i < $size; $i++) {
+
+				my $t = $stat[$j]{$pred[$i]};
+
+				if(_evaluate($t,$num[$i],$operators[$i])) {
+					$countPred++;
+				}
+				else {
+					$countPred = 0;
+					break;
+				}
+			}
+
+			if($countPred == $size) {
+				push @ans , $sets[$j];
+			}
+			$countPred = 0;
+		}
+		return @ans;
+
+	}
+
+	return @stat;
+}
+
+sub _evaluate {		#private use only
+
+	my $value = shift;
+	my $num = shift;
+	my $operator = shift;
+
+	if($operator eq "==") {
+		if($value == $num) {
+			return 1;
+		}
+		return 0;
+	}
+	elsif($operator eq "!=") {
+		if($value != $num) {
+			return 1;
+		}
+		return 0;		
+	}
+	elsif($operator eq ">") {
+		if($value > $num) {
+			return 1;
+		}
+		return 0;
+	}
+	elsif($operator eq ">=") {
+		if($value >= $num) {
+			return 1;
+		}
+		return 0;
+	}
+	elsif($operator eq "<") {
+		if($value < $num) {
+			return 1;
+		}
+		return 0;
+	}
+	elsif($operator eq "<=") {
+		if($value <= $num) {
+			return 1;
+		}
+		return 0;
+	}
+	return 0;
+}
+
+
+#sub compareStatistics {
+
+#	my @output = @{$_[0]};
+#	my @pred = @{$_[1]};
+#	my @num = @{$_[2]};
+#
+#	my $outSize = @output;
+#	my $predSize = @pred;
+#
+#	for($i = 0; $i < $outSize; $i++) {
+#		my @stat = statistics(\@{$output[$i]},\@pred);
+#		for($j = 0; $j < $predSize; $j++) {
+#			
+#		}
+#	}
+#}
+
+sub mapAS {	#Mapping of the Answer Sets in an array of hashes
+
+###### ACHTUNG ######
+	#Before assign predicates or answer sets desired, verify if the array elements are numbers or names
+
+
+	my $countAS = 0;
+
+	my @answerSets = @{$_[0]};
+
+	my @second;
+	if($_[1]) {
+		@second = @{$_[1]};
+	}
+
+	my @third;
+	if($_[2]) {
+		@third = @{$_[2]};
+	}
+
+	my @selectedAS;
+	
+	my @predList;
+
+	my @pred;
+
+	if(@second) {
+		if($second[0] =~ /\d+/) {
+
+			#print "DIGIT\n";
+			@selectedAS = @second;
+			if(@third) {
+				@predList = @third;
+			}
+
+		}
+
+		else {
+			#print "STRING\n";
+			@predList = @second;
+			if(@third) {
+				@selectedAS = @third;
+			}
+		}
+	}
+
+	#print "\n\nPREDLIST: @predList \n\n AS: @selectedAS \n\n";
+
+	#print @{$pred[0]{"p"}};	#sintax for an array of hashes
+
+	foreach my $elem (@answerSets) {
+
+		#print "ELEM: $elem s\n";
+		#<>;
+
+		if($elem =~ /(\w+).*\n/){
+			#$elem =~ s/\n//g;	#delete \n from the current element
+			#print "ELEM: $elem\n";
+			if(@predList) {
+				if(_existsPred($1,\@predList)) {
+					push @{$pred[$countAS]{$1}}, $elem;
+				}
+			}
+			else {
+				#print "ELEM: $elem\n";
+				push @{$pred[$countAS]{$1}}, $elem;
+				#print "PUSH: @{$pred[$countAS]{$1}}\n";
+				#<>;
+			}
+			#print @{$pred[$countAS]{$1}};
+			$countAS = $countAS + 1;
+			
+		}
+
+		elsif($elem =~ /(\w+).*/) {
+			#push @{$pred{$1}}, $elem;
+			#print "ELEM: $elem\n";
+			if(@predList) {
+				if(_existsPred($1,\@predList)) {
+					push @{$pred[$countAS]{$1}}, $elem;
+				}
+			}
+			else {
+				#print "ELEM: $elem\n";
+				push @{$pred[$countAS]{$1}}, $elem;
+				#print "PUSH: @{$pred[$countAS]{$1}}\n";
+				#<>;
+			}
+		}
+		#print "COUNT: $countAS\n";
+		#print "PRED: @{$pred[$countAS]{in}}\n";
+		
+	}
+
+	#print "PRED: @{$pred[3]{in}}\n";
+
+	#print @{$pred[0]{"b"}};
+
+	#print @{$pred[0]{"node"}};
+
+
+	if(@selectedAS) {
+		
+		my $size = @selectedAS;
+
+		my @selectedPred;
+
+		#print @{$pred[0]{"col"}};
+
+		for(my $i = 0; $i < $size; $i++) {
+			my $as = $selectedAS[$i];
+			#delete $pred[$as];
+			push @selectedPred, $pred[$as];
+		}
+
+		return @selectedPred;
+	}
+	#print "PRED: @{$pred[90]{in}}\n";
+	return @pred;
+
+}
+
+sub _existsPred {	#Verifies the existence of a predicate (private use only)
+
+	my $pred = $_[0];
+	my @predList = @{$_[1]};
+
+	my $size = @predList;
+
+	for(my $i = 0; $i < $size; $i++) {
+		if($pred eq $predList[$i]) {
+			return 1;
+		}
+	}
+	return 0;
+		
+}
+
+sub getPred {	#Returns the predicates from the array of hashes
+
+	my @pr = @{$_[0]};
+	return @{$pr[$_[1]]{$_[2]}};
+}
+
+sub getProjection {	#Returns the values selected by the user
+
+	my @pr = @{$_[0]};
+	my @projection;
+
+	my @res = @{$pr[$_[1]]{$_[2]}};
+	
+	my $size = @res;
+	my $fieldsStr;
+
+	for(my $i = 0; $i < $size; $i++) {
+		my $pred = @{$pr[$_[1]]{$_[2]}}[$i];
+		if($pred =~ /(\w+)\((.+)\)/) {
+			$fieldsStr = $2;
+		}
+		my @fields = split(',',$fieldsStr);
+		push @projection , $fields[$_[3]-1];		
+			
+	}
+
+	#return @{$pr[$_[1]]{$_[2]}};
+	return @projection;
+}
+
+sub createNewFile {
+
+	my $file = $_[0];
+	my $code = $_[1];
+
+	open FILE, ">", $file;
+	print FILE "$code\n";
+	close FILE;
+
+}
+
+sub addFacts {
+
+	my $name = $_[0];
+	my @facts = @{$_[1]};
+	my $append = $_[2];
+	my $filename = $_[3];
+	
+	open FILE, $append, $filename;
+
+	foreach my $f (@facts) {
+		print FILE "$name($f).\n";
+	}
+	close FILE;
+}
+
+
+1;
+__END__
+# Below is stub documentation for your module. You'd better edit it!
+
+=head1 NAME
+
+ASPerl - Perl extension for blah blah blah
+
+=head1 SYNOPSIS
+
+  use ASPerl;
+  blah blah blah
+
+=head1 DESCRIPTION
+
+Stub documentation for ASPerl, created by h2xs. It looks like the
+author of the extension was negligent enough to leave the stub
+unedited.
+
+Blah blah blah.
+
+=head2 EXPORT
+
+None by default.
+
+
+
+=head1 SEE ALSO
+
+Mention other useful documentation such as the documentation of
+related modules or operating system documentation (such as man pages
+in UNIX), or any relevant external documentation such as RFCs or
+standards.
+
+If you have a mailing list set up for your module, mention it here.
+
+If you have a web site set up for your module, mention it here.
+
+=head1 AUTHOR
+
+leviathan, E<lt>leviathan@E<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2011 by leviathan
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.10.1 or,
+at your option, any later version of Perl 5 you may have available.
+
+
+=cut
